@@ -1,12 +1,12 @@
 package timedmap
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
 
 const (
@@ -26,7 +26,7 @@ func TestFlush(t *testing.T) {
 	tm := New[int, int](dCleanupTick)
 
 	for i := 0; i < 10; i++ {
-		tm.set(i, 0, 1, time.Hour)
+		tm.set(i, 1, time.Hour)
 	}
 	assert.EqualValues(t, 10, len(tm.container))
 	tm.Flush()
@@ -45,13 +45,15 @@ func TestSet(t *testing.T) {
 	tm := New[string, string](dCleanupTick)
 
 	tm.Set(key, val, 20*time.Millisecond)
-	if v := tm.get(key, 0); v.IsEmpty() {
+	if v := tm.get(key); v.IsEmpty() {
 		t.Fatal("key was not set")
 	}
-	assert.Equal(t, val, tm.get(key, 0).Unfold().value)
+	assert.Equal(t, val, tm.get(key).Unfold().value)
 
 	time.Sleep(40 * time.Millisecond)
-	assert.True(t, tm.get(key, 0).IsEmpty())
+	assert.Panics(t, func() {
+		tm.get(key).Unfold()
+	})
 }
 
 func TestGetValue(t *testing.T) {
@@ -67,11 +69,15 @@ func TestGetValue(t *testing.T) {
 
 	time.Sleep(60 * time.Millisecond)
 
-	assert.True(t, tm.GetValue(key).IsEmpty())
+	assert.Panics(t, func() {
+		tm.GetValue(key).Unfold()
+	})
 
 	tm.Set(key, val, 1*time.Microsecond)
 	time.Sleep(2 * time.Millisecond)
-	assert.True(t, tm.GetValue(key).IsEmpty())
+	assert.Panics(t, func() {
+		tm.GetValue(key).Unfold()
+	})
 }
 
 func TestGetExpire(t *testing.T) {
@@ -106,11 +112,17 @@ func TestSetExpires(t *testing.T) {
 	err = tm.SetExpires(key, 50*time.Millisecond)
 	assert.Nil(t, err)
 
-	time.Sleep(30 * time.Millisecond)
-	assert.NotNil(t, tm.get(key, 0))
+	fmt.Println(time.Now().UnixMilli())
+	time.Sleep(12 * time.Millisecond)
+	assert.NotPanics(t, func() {
+		fmt.Println(time.Now().UnixMilli())
+		tm.get(key).Unfold()
+	})
 
 	time.Sleep(52 * time.Millisecond)
-	assert.True(t, tm.get(key, 0).IsEmpty())
+	assert.Panics(t, func() {
+		tm.get(key).Unfold()
+	})
 }
 
 func TestContains(t *testing.T) {
@@ -135,7 +147,9 @@ func TestRemove(t *testing.T) {
 	tm.Set(key, 1, time.Hour)
 	tm.Remove(key)
 
-	assert.True(t, tm.get(key, 0).IsEmpty())
+	assert.Panics(t, func() {
+		tm.get(key).Unfold()
+	})
 }
 
 func TestRefresh(t *testing.T) {
@@ -150,10 +164,12 @@ func TestRefresh(t *testing.T) {
 	assert.Nil(t, tm.Refresh(key, 50*time.Millisecond))
 
 	time.Sleep(30 * time.Millisecond)
-	assert.NotNil(t, tm.get(key, 0))
+	assert.NotPanics(t, func() {
+		tm.get(key).Unfold()
+	})
 
 	time.Sleep(100 * time.Millisecond)
-	assert.True(t, tm.get(key, 0).IsEmpty())
+	assert.True(t, tm.get(key).IsEmpty())
 }
 
 func TestSize(t *testing.T) {
@@ -163,20 +179,6 @@ func TestSize(t *testing.T) {
 		tm.Set(i, 1, 50*time.Millisecond)
 	}
 	assert.EqualValues(t, 25, tm.Size())
-}
-
-func TestCallback(t *testing.T) {
-	cb := new(CB[int])
-	cb.On("Cb").Return()
-
-	tm := New[int, int](dCleanupTick)
-
-	tm.Set(1, 3, 25*time.Millisecond, cb.Cb)
-
-	time.Sleep(50 * time.Millisecond)
-	assert.False(t, tm.get(1, 0).IsAny())
-	cb.AssertCalled(t, "Cb")
-	assert.EqualValues(t, 3, cb.TestData().Get("v").Int())
 }
 
 func TestStopCleaner(t *testing.T) {
@@ -201,18 +203,20 @@ func TestStartCleanerInternal(t *testing.T) {
 		assert.False(t, tm.cleanerRunning)
 
 		// Ensure cleanup timer is not running
-		tm.set(1, 0, 1, 0)
+		tm.set(1, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.EqualValues(t, 1, tm.getRaw(1, 0).Unfold().value)
+		assert.EqualValues(t, 1, tm.getRaw(1).Unfold().value)
 
 		tm.StartCleanerInternal(dCleanupTick)
 		time.Sleep(10 * time.Millisecond)
 		assert.True(t, tm.cleanerRunning)
 
 		// Ensure cleanup timer is running
-		tm.set(1, 0, 1, 0)
+		tm.set(1, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.True(t, tm.getRaw(1, 0).IsEmpty())
+		assert.Panics(t, func() {
+			tm.getRaw(1).Unfold()
+		})
 	}
 
 	// Test ticker overwrite and cleaner stop
@@ -236,9 +240,9 @@ func TestStartCleanerExternal(t *testing.T) {
 		assert.False(t, tm.cleanerRunning)
 
 		// Ensure cleanup timer is not running
-		tm.set(1, 0, 1, 0)
+		tm.set(1, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.EqualValues(t, 1, tm.getRaw(1, 0).Unfold().value)
+		assert.EqualValues(t, 1, tm.getRaw(1).Unfold().value)
 
 		c := make(chan time.Time)
 
@@ -247,14 +251,18 @@ func TestStartCleanerExternal(t *testing.T) {
 		assert.True(t, tm.cleanerRunning)
 
 		// Ensure cleanup is controlled by c
-		tm.set(1, 0, 1, 0)
+		tm.set(1, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.Equal(t, tm.getRaw(1, 0).IsAny(), true)
+		assert.NotPanics(t, func() {
+			tm.getRaw(1).Unfold()
+		})
 
 		// Ensure cleanup is controlled by c
 		c <- time.Now()
 		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, tm.getRaw(1, 0).IsEmpty(), true)
+		assert.Panics(t, func() {
+			tm.getRaw(1).Unfold()
+		})
 	}
 
 	// Ensure timer overwrite
@@ -269,9 +277,11 @@ func TestStartCleanerExternal(t *testing.T) {
 		tm.StartCleanerExternal(c)
 
 		// Ensure cleanup is controlled by c
-		tm.set(1, 0, 1, 0)
+		tm.set(1, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.NotNil(t, tm.getRaw(1, 0))
+		assert.NotPanics(t, func() {
+			tm.getRaw(1).Unfold()
+		})
 	}
 }
 
@@ -279,7 +289,7 @@ func TestSnapshot(t *testing.T) {
 	tm := New[int, int](1 * time.Minute)
 
 	for i := 0; i < 10; i++ {
-		tm.set(i, 0, i, 1*time.Minute)
+		tm.set(i, i, 1*time.Minute)
 	}
 
 	m := tm.Snapshot()
@@ -346,10 +356,12 @@ func TestExternalTicker(t *testing.T) {
 	tm := New[string, string](0, ticker.C)
 
 	tm.Set(key, val, 20*time.Millisecond)
-	assert.Equal(t, val, tm.get(key, 0).Unfold().value)
+	assert.Equal(t, val, tm.get(key).Unfold().value)
 
 	time.Sleep(40 * time.Millisecond)
-	assert.Equal(t, tm.get(key, 0).IsEmpty(), true)
+	assert.Panics(t, func() {
+		tm.get(key).Unfold()
+	})
 }
 
 func TestBeforeCleanup(t *testing.T) {
@@ -395,16 +407,4 @@ func BenchmarkSetGetSameKey(b *testing.B) {
 		tm.Set(1, n, 1*time.Hour)
 		tm.GetValue(1)
 	}
-}
-
-// ----------------------------------------------------------
-// --- UTILS ---
-
-type CB[T any] struct {
-	mock.Mock
-}
-
-func (cb *CB[T]) Cb(v T) {
-	cb.TestData().Set("v", v)
-	cb.Called()
 }

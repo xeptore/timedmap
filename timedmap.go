@@ -7,24 +7,17 @@ import (
 	"github.com/zekroTJA/timedmap/maybe"
 )
 
-type callback[V any] func(value V)
-
 // TimedMap contains a map with all key-value pairs,
 // and a timer, which cleans the map in the set
 // tick durations from expired keys.
 type TimedMap[K comparable, V any] struct {
 	mtx             sync.RWMutex
-	container       map[keyWrap[K]]element[V]
+	container       map[K]element[V]
 	elementPool     sync.Pool
 	cleanupTickTime time.Duration
 	cleanerTicker   *time.Ticker
 	cleanerStopChan chan bool
 	cleanerRunning  bool
-}
-
-type keyWrap[T comparable] struct {
-	sec int
-	key T
 }
 
 // element contains the actual value as interface type,
@@ -34,7 +27,6 @@ type keyWrap[T comparable] struct {
 type element[V any] struct {
 	value   V
 	expires time.Time
-	cbs     []callback[V]
 }
 
 // New creates and returns a new instance of TimedMap.
@@ -55,7 +47,7 @@ type element[V any] struct {
 // the cleanup loop when already running if you want to.
 func New[K comparable, V any](cleanupTickTime time.Duration, tickerChan ...<-chan time.Time) *TimedMap[K, V] {
 	tm := &TimedMap[K, V]{
-		container:       make(map[keyWrap[K]]element[V]),
+		container:       make(map[K]element[V]),
 		cleanerStopChan: make(chan bool),
 		elementPool: sync.Pool{
 			New: func() interface{} {
@@ -83,26 +75,26 @@ func (tm *TimedMap[K, V]) Ident() int {
 // Set appends a key-value pair to the map or sets the value of
 // a key. expiresAfter sets the expiry time after the key-value pair
 // will automatically be removed from the map.
-func (tm *TimedMap[K, V]) Set(key K, value V, expiresAfter time.Duration, cb ...callback[V]) {
-	tm.set(key, 0, value, expiresAfter, cb...)
+func (tm *TimedMap[K, V]) Set(key K, value V, expiresAfter time.Duration) {
+	tm.set(key, value, expiresAfter)
 }
 
 // GetValue returns an interface of the value of a key in the
 // map. The returned value is nil if there is no value to the
 // passed key or if the value was expired.
 func (tm *TimedMap[K, V]) GetValue(key K) maybe.Maybe[V] {
-	v := tm.get(key, 0)
+	v := tm.get(key)
 	if v.IsEmpty() {
 		return maybe.None[V]()
 	}
 	return maybe.From(v.Unfold().value)
 }
 
-// GetExpires returns the expire time of a key-value pair.
+// GetExpires returns the expiry time of a key-value pair.
 // If the key-value pair does not exist in the map or
 // was expired, this will return an error object.
 func (tm *TimedMap[K, V]) GetExpires(key K) (time.Time, error) {
-	v := tm.get(key, 0)
+	v := tm.get(key)
 	if v.IsEmpty() {
 		return time.Time{}, ErrKeyNotFound
 	}
@@ -115,30 +107,30 @@ func (tm *TimedMap[K, V]) SetExpire(key K, d time.Duration) error {
 	return tm.SetExpires(key, d)
 }
 
-// SetExpires sets the expire time for a key-value
+// SetExpires sets the expiry time for a key-value
 // pair to the passed duration. If there is no value
 // to the key passed , this will return an error.
 func (tm *TimedMap[K, V]) SetExpires(key K, d time.Duration) error {
-	return tm.setExpires(key, 0, d)
+	return tm.setExpires(key, d)
 }
 
 // Contains returns true, if the key exists in the map.
 // false will be returned, if there is no value to the
 // key or if the key-value pair was expired.
 func (tm *TimedMap[K, V]) Contains(key K) bool {
-	return tm.get(key, 0).IsAny()
+	return tm.get(key).IsAny()
 }
 
 // Remove deletes a key-value pair in the map.
 func (tm *TimedMap[K, V]) Remove(key K) {
-	tm.remove(key, 0)
+	tm.remove(key)
 }
 
-// Refresh extends the expire time for a key-value pair
+// Refresh extends the expiry time for a key-value pair
 // about the passed duration. If there is no value to
 // the key passed, this will return an error object.
 func (tm *TimedMap[K, V]) Refresh(key K, d time.Duration) error {
-	return tm.refresh(key, 0, d)
+	return tm.refresh(key, d)
 }
 
 // Flush deletes all key-value pairs of the map.
@@ -202,7 +194,7 @@ func (tm *TimedMap[K, V]) StopCleaner() {
 // Snapshot returns a new map which represents the
 // current key-value state of the internal container.
 func (tm *TimedMap[K, V]) Snapshot() map[K]V {
-	return tm.getSnapshot(0)
+	return tm.getSnapshot()
 }
 
 // cleanupLoop holds the loop executing the cleanup
@@ -225,21 +217,12 @@ func (tm *TimedMap[K, V]) cleanupLoop(tc <-chan time.Time) {
 
 // expireElement removes the specified key-value element
 // from the map and executes all defined callback functions
-func (tm *TimedMap[K, V]) expireElement(key K, sec int, v element[V]) {
-	for _, cb := range v.cbs {
-		cb(v.value)
-	}
-
-	k := keyWrap[K]{
-		sec: sec,
-		key: key,
-	}
-
+func (tm *TimedMap[K, V]) expireElement(key K, v element[V]) {
 	tm.elementPool.Put(v)
-	delete(tm.container, k)
+	delete(tm.container, key)
 }
 
-// cleanUp iterates trhough the map and expires all key-value
+// cleanUp iterates through the map and expires all key-value
 // pairs which expire time after the current time
 func (tm *TimedMap[K, V]) cleanUp() {
 	now := time.Now()
@@ -249,42 +232,27 @@ func (tm *TimedMap[K, V]) cleanUp() {
 
 	for k, v := range tm.container {
 		if now.After(v.expires) {
-			tm.expireElement(k.key, k.sec, v)
+			tm.expireElement(k, v)
 		}
 	}
 }
 
-// set sets the value for a key and section with the
+// set puts the value for a key and section with the
 // given expiration parameters
-func (tm *TimedMap[K, V]) set(key K, sec int, val V, expiresAfter time.Duration, cb ...callback[V]) {
-	// re-use element when existent on this key
-	if v := tm.getRaw(key, sec); v.IsAny() {
-		inside := v.Unfold()
-		inside.value = val
-		inside.expires = time.Now().Add(expiresAfter)
-		inside.cbs = cb
-		return
-	}
-
-	k := keyWrap[K]{
-		sec: sec,
-		key: key,
-	}
-
+func (tm *TimedMap[K, V]) set(key K, val V, expiresAfter time.Duration) {
 	tm.mtx.Lock()
 	defer tm.mtx.Unlock()
 
 	v := tm.elementPool.Get().(element[V])
 	v.value = val
 	v.expires = time.Now().Add(expiresAfter)
-	v.cbs = cb
-	tm.container[k] = v
+	tm.container[key] = v
 }
 
 // get returns an element object by key and section
 // if the value has not already expired
-func (tm *TimedMap[K, V]) get(key K, sec int) maybe.Maybe[element[V]] {
-	v := tm.getRaw(key, sec)
+func (tm *TimedMap[K, V]) get(key K) maybe.Maybe[element[V]] {
+	v := tm.getRaw(key)
 
 	if v.IsEmpty() {
 		return maybe.None[element[V]]()
@@ -294,7 +262,7 @@ func (tm *TimedMap[K, V]) get(key K, sec int) maybe.Maybe[element[V]] {
 	if time.Now().After(inside.expires) {
 		tm.mtx.Lock()
 		defer tm.mtx.Unlock()
-		tm.expireElement(key, sec, inside)
+		tm.expireElement(key, inside)
 		return maybe.None[element[V]]()
 	}
 
@@ -303,14 +271,9 @@ func (tm *TimedMap[K, V]) get(key K, sec int) maybe.Maybe[element[V]] {
 
 // getRaw returns the raw element object by key,
 // not depending on expiration time
-func (tm *TimedMap[K, V]) getRaw(key K, sec int) maybe.Maybe[element[V]] {
-	k := keyWrap[K]{
-		sec: sec,
-		key: key,
-	}
-
+func (tm *TimedMap[K, V]) getRaw(key K) maybe.Maybe[element[V]] {
 	tm.mtx.RLock()
-	v, ok := tm.container[k]
+	v, ok := tm.container[key]
 	tm.mtx.RUnlock()
 
 	if !ok {
@@ -320,61 +283,52 @@ func (tm *TimedMap[K, V]) getRaw(key K, sec int) maybe.Maybe[element[V]] {
 	return maybe.From[element[V]](v)
 }
 
-// remove removes an element from the map by given
+// remove deletes an element from the map by given
 // key and section
-func (tm *TimedMap[K, V]) remove(key K, sec int) {
-	k := keyWrap[K]{
-		sec: sec,
-		key: key,
-	}
-
+func (tm *TimedMap[K, V]) remove(key K) {
 	tm.mtx.Lock()
 	defer tm.mtx.Unlock()
 
-	v, ok := tm.container[k]
+	v, ok := tm.container[key]
 	if !ok {
 		return
 	}
 
 	tm.elementPool.Put(v)
-	delete(tm.container, k)
+	delete(tm.container, key)
 }
 
 // refresh extends the lifetime of the given key in the
 // given section by the duration d.
-func (tm *TimedMap[K, V]) refresh(key K, sec int, d time.Duration) error {
-	v := tm.get(key, sec)
+func (tm *TimedMap[K, V]) refresh(key K, d time.Duration) error {
+	v := tm.get(key)
 	if v.IsEmpty() {
 		return ErrKeyNotFound
 	}
-	inside := v.Unfold()
-	inside.expires = inside.expires.Add(d)
+	tm.Set(key, v.Unfold().value, d)
 	return nil
 }
 
 // setExpires sets the lifetime of the given key in the
 // given section to the duration d.
-func (tm *TimedMap[K, V]) setExpires(key K, sec int, d time.Duration) error {
-	v := tm.get(key, sec)
+func (tm *TimedMap[K, V]) setExpires(key K, d time.Duration) error {
+	v := tm.get(key)
 	if v.IsEmpty() {
 		return ErrKeyNotFound
 	}
-	inside := v.Unfold()
-	inside.expires = time.Now().Add(d)
+	tm.Set(key, v.Unfold().value, d)
 	return nil
 }
 
-func (tm *TimedMap[K, V]) getSnapshot(sec int) (m map[K]V) {
+func (tm *TimedMap[K, V]) getSnapshot() (m map[K]V) {
 	m = make(map[K]V)
 
 	tm.mtx.RLock()
 	defer tm.mtx.RUnlock()
 
-	for k, v := range tm.container {
-		if k.sec == sec {
-			m[k.key] = v.value
-		}
+	for key, value := range tm.container {
+		m[key] = value.value
 	}
 
-	return
+	return m
 }
