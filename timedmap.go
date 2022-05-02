@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zekroTJA/timedmap/maybe"
+	"github.com/xeptore/timedmap/v3/maybe"
 )
 
 // TimedMap contains a map with all key-value pairs,
