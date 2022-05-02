@@ -14,7 +14,7 @@ const (
 )
 
 func TestNew(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[string, int](dCleanupTick)
 
 	assert.NotNil(t, tm)
 	assert.EqualValues(t, 0, len(tm.container))
@@ -23,7 +23,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestFlush(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 
 	for i := 0; i < 10; i++ {
 		tm.set(i, 0, 1, time.Hour)
@@ -34,7 +34,7 @@ func TestFlush(t *testing.T) {
 }
 
 func TestIdent(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 	assert.EqualValues(t, 0, tm.Ident())
 }
 
@@ -42,45 +42,43 @@ func TestSet(t *testing.T) {
 	const key = "tKeySet"
 	const val = "tValSet"
 
-	tm := New(dCleanupTick)
+	tm := New[string, string](dCleanupTick)
 
 	tm.Set(key, val, 20*time.Millisecond)
-	if v := tm.get(key, 0); v == nil {
+	if v := tm.get(key, 0); v.IsEmpty() {
 		t.Fatal("key was not set")
-	} else if v.value.(string) != val {
-		t.Fatal("value was not like set")
 	}
-	assert.Equal(t, val, tm.get(key, 0).value)
+	assert.Equal(t, val, tm.get(key, 0).Unfold().value)
 
 	time.Sleep(40 * time.Millisecond)
-	assert.Nil(t, tm.get(key, 0))
+	assert.True(t, tm.get(key, 0).IsEmpty())
 }
 
 func TestGetValue(t *testing.T) {
 	const key = "tKeyGetVal"
 	const val = "tValGetVal"
 
-	tm := New(dCleanupTick)
+	tm := New[string, string](dCleanupTick)
 
 	tm.Set(key, val, 50*time.Millisecond)
-	assert.Nil(t, tm.GetValue("keyNotExists"))
+	assert.True(t, tm.GetValue("keyNotExists").IsEmpty())
 
-	assert.Equal(t, val, tm.GetValue(key))
+	assert.Equal(t, val, tm.GetValue(key).Unfold())
 
 	time.Sleep(60 * time.Millisecond)
 
-	assert.Nil(t, tm.GetValue(key))
+	assert.True(t, tm.GetValue(key).IsEmpty())
 
 	tm.Set(key, val, 1*time.Microsecond)
 	time.Sleep(2 * time.Millisecond)
-	assert.Nil(t, tm.GetValue(key))
+	assert.True(t, tm.GetValue(key).IsEmpty())
 }
 
 func TestGetExpire(t *testing.T) {
 	const key = "tKeyGetExp"
 	const val = "tValGetExp"
 
-	tm := New(dCleanupTick)
+	tm := New[string, string](dCleanupTick)
 
 	tm.Set(key, val, 50*time.Millisecond)
 	ct := time.Now().Add(50 * time.Millisecond)
@@ -96,7 +94,7 @@ func TestGetExpire(t *testing.T) {
 func TestSetExpires(t *testing.T) {
 	const key = "tKeyRef"
 
-	tm := New(dCleanupTick)
+	tm := New[string, int](dCleanupTick)
 
 	err := tm.Refresh("keyNotExists", time.Hour)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
@@ -112,13 +110,13 @@ func TestSetExpires(t *testing.T) {
 	assert.NotNil(t, tm.get(key, 0))
 
 	time.Sleep(52 * time.Millisecond)
-	assert.Nil(t, tm.get(key, 0))
+	assert.True(t, tm.get(key, 0).IsEmpty())
 }
 
 func TestContains(t *testing.T) {
 	const key = "tKeyCont"
 
-	tm := New(dCleanupTick)
+	tm := New[string, int](dCleanupTick)
 
 	tm.Set(key, 1, 30*time.Millisecond)
 
@@ -132,18 +130,18 @@ func TestContains(t *testing.T) {
 func TestRemove(t *testing.T) {
 	const key = "tKeyRem"
 
-	tm := New(dCleanupTick)
+	tm := New[string, int](dCleanupTick)
 
 	tm.Set(key, 1, time.Hour)
 	tm.Remove(key)
 
-	assert.Nil(t, tm.get(key, 0))
+	assert.True(t, tm.get(key, 0).IsEmpty())
 }
 
 func TestRefresh(t *testing.T) {
 	const key = "tKeyRef"
 
-	tm := New(dCleanupTick)
+	tm := New[string, int](dCleanupTick)
 
 	err := tm.Refresh("keyNotExists", time.Hour)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
@@ -155,11 +153,11 @@ func TestRefresh(t *testing.T) {
 	assert.NotNil(t, tm.get(key, 0))
 
 	time.Sleep(100 * time.Millisecond)
-	assert.Nil(t, tm.get(key, 0))
+	assert.True(t, tm.get(key, 0).IsEmpty())
 }
 
 func TestSize(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 
 	for i := 0; i < 25; i++ {
 		tm.Set(i, 1, 50*time.Millisecond)
@@ -168,21 +166,21 @@ func TestSize(t *testing.T) {
 }
 
 func TestCallback(t *testing.T) {
-	cb := new(CB)
+	cb := new(CB[int])
 	cb.On("Cb").Return()
 
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 
 	tm.Set(1, 3, 25*time.Millisecond, cb.Cb)
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Nil(t, tm.get(1, 0))
+	assert.False(t, tm.get(1, 0).IsAny())
 	cb.AssertCalled(t, "Cb")
 	assert.EqualValues(t, 3, cb.TestData().Get("v").Int())
 }
 
 func TestStopCleaner(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 
 	time.Sleep(10 * time.Millisecond)
 	tm.StopCleaner()
@@ -197,7 +195,7 @@ func TestStopCleaner(t *testing.T) {
 func TestStartCleanerInternal(t *testing.T) {
 	// Test functionality
 	{
-		tm := New(0)
+		tm := New[int, int](0)
 		time.Sleep(10 * time.Millisecond)
 
 		assert.False(t, tm.cleanerRunning)
@@ -205,7 +203,7 @@ func TestStartCleanerInternal(t *testing.T) {
 		// Ensure cleanup timer is not running
 		tm.set(1, 0, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.EqualValues(t, 1, tm.getRaw(1, 0).value)
+		assert.EqualValues(t, 1, tm.getRaw(1, 0).Unfold().value)
 
 		tm.StartCleanerInternal(dCleanupTick)
 		time.Sleep(10 * time.Millisecond)
@@ -214,12 +212,12 @@ func TestStartCleanerInternal(t *testing.T) {
 		// Ensure cleanup timer is running
 		tm.set(1, 0, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.Nil(t, tm.getRaw(1, 0))
+		assert.True(t, tm.getRaw(1, 0).IsEmpty())
 	}
 
 	// Test ticker overwrite and cleaner stop
 	{
-		tm := New(dCleanupTick)
+		tm := New[int, int](dCleanupTick)
 		time.Sleep(10 * time.Millisecond)
 
 		oldTicker := tm.cleanerTicker
@@ -232,7 +230,7 @@ func TestStartCleanerInternal(t *testing.T) {
 func TestStartCleanerExternal(t *testing.T) {
 	// Test functionality
 	{
-		tm := New(0)
+		tm := New[int, int](0)
 		time.Sleep(10 * time.Millisecond)
 
 		assert.False(t, tm.cleanerRunning)
@@ -240,7 +238,7 @@ func TestStartCleanerExternal(t *testing.T) {
 		// Ensure cleanup timer is not running
 		tm.set(1, 0, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.EqualValues(t, 1, tm.getRaw(1, 0).value)
+		assert.EqualValues(t, 1, tm.getRaw(1, 0).Unfold().value)
 
 		c := make(chan time.Time)
 
@@ -251,17 +249,17 @@ func TestStartCleanerExternal(t *testing.T) {
 		// Ensure cleanup is controlled by c
 		tm.set(1, 0, 1, 0)
 		time.Sleep(100 * time.Millisecond)
-		assert.NotNil(t, tm.getRaw(1, 0))
+		assert.Equal(t, tm.getRaw(1, 0).IsAny(), true)
 
 		// Ensure cleanup is controlled by c
 		c <- time.Now()
 		time.Sleep(10 * time.Millisecond)
-		assert.Nil(t, tm.getRaw(1, 0))
+		assert.Equal(t, tm.getRaw(1, 0).IsEmpty(), true)
 	}
 
 	// Ensure timer overwrite
 	{
-		tm := New(dCleanupTick)
+		tm := New[int, int](dCleanupTick)
 		time.Sleep(10 * time.Millisecond)
 
 		assert.True(t, tm.cleanerRunning)
@@ -278,7 +276,7 @@ func TestStartCleanerExternal(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	tm := New(1 * time.Minute)
+	tm := New[int, int](1 * time.Minute)
 
 	for i := 0; i < 10; i++ {
 		tm.set(i, 0, i, 1*time.Minute)
@@ -293,11 +291,11 @@ func TestSnapshot(t *testing.T) {
 }
 
 func TestConcurrentReadWrite(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 
 	go func() {
 		for {
-			for i := 0; i < 100; i++ {
+			for i := 0; i < 10; i++ {
 				tm.Set(i, i, 2*time.Second)
 			}
 		}
@@ -309,9 +307,9 @@ func TestConcurrentReadWrite(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	go func() {
 		for {
-			for i := 0; i < 100; i++ {
+			for i := 0; i < 10; i++ {
 				v := tm.GetValue(i)
-				assert.EqualValues(t, i, v)
+				assert.EqualValues(t, i, v.Unfold())
 			}
 		}
 	}()
@@ -320,7 +318,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 }
 
 func TestGetExpiredConcurrent(t *testing.T) {
-	tm := New(dCleanupTick)
+	tm := New[int, int](dCleanupTick)
 
 	wg := sync.WaitGroup{}
 	for i := 0; i < 50000; i++ {
@@ -345,40 +343,37 @@ func TestExternalTicker(t *testing.T) {
 	const val = "tValSet"
 
 	ticker := time.NewTicker(dCleanupTick)
-	tm := New(0, ticker.C)
+	tm := New[string, string](0, ticker.C)
 
 	tm.Set(key, val, 20*time.Millisecond)
-	assert.Equal(t, val, tm.get(key, 0).value)
+	assert.Equal(t, val, tm.get(key, 0).Unfold().value)
 
 	time.Sleep(40 * time.Millisecond)
-	assert.Nil(t, tm.get(key, 0))
+	assert.Equal(t, tm.get(key, 0).IsEmpty(), true)
 }
 
 func TestBeforeCleanup(t *testing.T) {
 	const key, value = 1, 2
 
-	tm := New(1 * time.Hour)
+	tm := New[int, int](1 * time.Hour)
 
 	tm.Set(key, value, 5*time.Millisecond)
 
 	time.Sleep(10 * time.Millisecond)
-
-	_, ok := tm.GetValue(key).(int)
-	assert.False(t, ok)
 }
 
 // ----------------------------------------------------------
 // --- BENCHMARKS ---
 
 func BenchmarkSetValues(b *testing.B) {
-	tm := New(1 * time.Minute)
+	tm := New[int, int](1 * time.Minute)
 	for n := 0; n < b.N; n++ {
 		tm.Set(n, n, 1*time.Hour)
 	}
 }
 
 func BenchmarkSetGetValues(b *testing.B) {
-	tm := New(1 * time.Minute)
+	tm := New[int, int](1 * time.Minute)
 	for n := 0; n < b.N; n++ {
 		tm.Set(n, n, 1*time.Hour)
 		tm.GetValue(n)
@@ -386,7 +381,7 @@ func BenchmarkSetGetValues(b *testing.B) {
 }
 
 func BenchmarkSetGetRemoveValues(b *testing.B) {
-	tm := New(1 * time.Minute)
+	tm := New[int, int](1 * time.Minute)
 	for n := 0; n < b.N; n++ {
 		tm.Set(n, n, 1*time.Hour)
 		tm.GetValue(n)
@@ -395,7 +390,7 @@ func BenchmarkSetGetRemoveValues(b *testing.B) {
 }
 
 func BenchmarkSetGetSameKey(b *testing.B) {
-	tm := New(1 * time.Minute)
+	tm := New[int, int](1 * time.Minute)
 	for n := 0; n < b.N; n++ {
 		tm.Set(1, n, 1*time.Hour)
 		tm.GetValue(1)
@@ -405,11 +400,11 @@ func BenchmarkSetGetSameKey(b *testing.B) {
 // ----------------------------------------------------------
 // --- UTILS ---
 
-type CB struct {
+type CB[T any] struct {
 	mock.Mock
 }
 
-func (cb *CB) Cb(v interface{}) {
+func (cb *CB[T]) Cb(v T) {
 	cb.TestData().Set("v", v)
 	cb.Called()
 }

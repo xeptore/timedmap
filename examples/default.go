@@ -11,12 +11,12 @@ func main() {
 
 	// Creates a new timed map which scans for
 	// expired keys every 1 second
-	tm := timedmap.New(1 * time.Second)
+	tm := timedmap.New[string, int](1 * time.Second)
 
 	// Add a key "hey" with the value 213, which should
 	// expire after 3 seconds and execute the callback, which
 	// prints that the key was expired
-	tm.Set("hey", 213, 3*time.Second, func(v interface{}) {
+	tm.Set("hey", 213, 3*time.Second, func(v int) {
 		log.Println("key-value pair of 'hey' has expired")
 	})
 
@@ -33,12 +33,12 @@ func main() {
 	printKeyVal(tm, "hey")
 }
 
-func printKeyVal(tm *timedmap.TimedMap, key interface{}) {
-	d, ok := tm.GetValue(key).(int)
-	if !ok {
+func printKeyVal[K comparable, V any](tm *timedmap.TimedMap[K, V], key K) {
+	d := tm.GetValue(key)
+	if d == nil {
 		log.Println("data expired")
 		return
 	}
 
-	log.Printf("%v = %d\n", key, d)
+	log.Printf("%v = %+v\n", key, d)
 }
